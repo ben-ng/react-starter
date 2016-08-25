@@ -10,24 +10,35 @@ var Hapi = require('hapi')
   , path = require('path')
   , goodConsole = require('good-console')
   , goodOptions = {
-      opsInterval: 30000,
-      reporters: [{
-        reporter: goodConsole,
-        events: { log: '*', response: '*' }
-      }]
+      ops: { interval: 30000 },
+      reporters: {
+        consoleReporter: [{
+            module: 'good-squeeze',
+            name: 'Squeeze',
+            args: [{ log: '*', response: '*' }]
+        }, {
+            module: 'good-console'
+        }, 'stdout']
+      }
     }
   , build = require('./build')
   , indexTemplateSource = fs.readFileSync('templates/index.hbs').toString()
   , indexTemplate = hbs.compile(indexTemplateSource)
   , server = new Hapi.Server()
   , startedAt = Date.now()
-  , logWrap = function logWrap (fn, message) {
-      return function (next) {
-        fn.apply(null, [function () {
+    // Wraps a handler in an async.auto configuration so that it console.logs after calling it's
+    // "next" completion callback
+  , logWrap = function logWrap (autoHandler, message) {
+      return function (originalNext) {
+        // Replace the "next" function with one that console.logs before executing
+        // the original "next" function.
+        var newNext = function () {
           console.log('  ' + message + ' (' + (Date.now() - startedAt) + 'ms)')
+          originalNext.apply(null, Array.prototype.slice.call(arguments))
+        }
 
-          next.apply(null, Array.prototype.slice.call(arguments))
-        }].concat(Array.prototype.slice.call(arguments, 1)))
+        // Call the handler in the async.auto configuration with the wrapped "next" function
+        autoHandler.apply(null, [newNext].concat(Array.prototype.slice.call(arguments, 1)))
       }
     }
 
@@ -44,7 +55,7 @@ async.auto({
       next(null, err ? false : stats.isDirectory())
     })
   }, 'checked for dist directory')
-, build: ['distExists', logWrap(function (next, results) {
+, build: ['distExists', logWrap(function (results, next) {
     // Don't rebuild in prod unless dist is missing for some reason
     if (results.distExists && process.env.NODE_ENV === 'production') {
       next()
